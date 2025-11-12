@@ -1,0 +1,5 @@
+__pycache__/
+pr2/
+.env
+vector_store/
+Uploads/

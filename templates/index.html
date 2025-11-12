@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Q&A with RAG</title>
+    <!-- Load Tailwind CSS from CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar for webkit browsers */
+        #chat-box::-webkit-scrollbar {
+            width: 8px;
+        }
+        #chat-box::-webkit-scrollbar-track {
+            background: #2d3748; /* bg-gray-800 */
+        }
+        #chat-box::-webkit-scrollbar-thumb {
+            background: #4a5568; /* bg-gray-600 */
+            border-radius: 4px;
+        }
+        #chat-box::-webkit-scrollbar-thumb:hover {
+            background: #718096; /* bg-gray-500 */
+        }
+        /* Basic body styling for dark mode */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .chat-message {
+            opacity: 0;
+            transform: translateY(20px);
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+        @keyframes fadeIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white h-full flex items-center justify-center p-4">
+
+    <div class="bg-gray-800 w-full max-w-2xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow:hidden">
+        
+        <!-- Header -->
+        <header class="border-b border-gray-700 p-4">
+            <h1 class="text-2xl font-bold text-center">Document Q&A</h1>
+            <!-- Updated subtitle to reflect the new tech -->
+            <p class="text-sm text-gray-400 text-center">Powered by Groq & LangChain</p>
+        </header>
+
+        <!-- Upload Section -->
+        <section id="upload-section" class="p-6 border-b border-gray-700">
+            <form id="upload-form">
+                <label for="file-upload" class="block text-sm font-medium text-gray-300 mb-2">1. Upload your document</label>
+                <div class="flex items-center space-x-2">
+                    <input id="file-upload" name="file" type="file" accept=".pdf,.txt" required class="block w-full text-sm text-gray-400
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-lg file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-indigo-600 file:text-white
+                        hover:file:bg-indigo-700
+                        cursor-pointer"/>
+                    <button type="submit" id="upload-button" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold text-white shadow-md transition-all duration-200">
+                        Upload
+                    </button>
+                </div>
+            </form>
+            <div id="upload-status" class="text-sm text-gray-400 mt-3"></div>
+        </section>
+
+        <!-- Chat Area -->
+        <main class="flex-1 p-6 overflow-y-auto" id="chat-box">
+            <!-- Messages will be injected here by JavaScript -->
+            <div class="chat-message bg-gray-700 p-3 rounded-lg self-start w-fit max-w-md">
+                <p class="font-semibold text-indigo-300 mb-1">System</p>
+                <p>Please upload a document to begin.</p>
+            </div>
+        </main>
+
+        <!-- Query Input Section -->
+        <footer class="p-6 border-t border-gray-700">
+            <form id="query-form" class="flex items-center space-x-3">
+                <input
+                    type="text"
+                    id="query-input"
+                    placeholder="2. Ask a question..."
+                    required
+                    disabled
+                    class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                <button
+                    type="submit"
+                    id="query-button"
+                    disabled
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    Send
+                </button>
+            </form>
+        </footer>
+    </div>
+
+    <script>
+        // --- Get DOM Elements ---
+        const uploadForm = document.getElementById('upload-form');
+        const uploadButton = document.getElementById('upload-button');
+        const uploadStatus = document.getElementById('upload-status');
+        const fileUpload = document.getElementById('file-upload');
+        
+        const queryForm = document.getElementById('query-form');
+        const queryInput = document.getElementById('query-input');
+        const queryButton = document.getElementById('query-button');
+        
+        const chatBox = document.getElementById('chat-box');
+
+        // --- State ---
+        let isProcessing = false;
+
+        // --- Helper Function to Display Messages ---
+        function displayMessage(sender, text) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('chat-message', 'mb-4', 'max-w-md');
+            
+            let header = '';
+            if (sender === 'user') {
+                messageDiv.classList.add('bg-indigo-600', 'p-3', 'rounded-lg', 'self-end', 'ml-auto');
+                header = '<p class="font-semibold text-indigo-100 mb-1">You</p>';
+            } else if (sender === 'bot') {
+                messageDiv.classList.add('bg-gray-700', 'p-3', 'rounded-lg', 'self-start', 'w-fit');
+                header = '<p class="font-semibold text-indigo-300 mb-1">Bot</p>';
+            } else { // System messages
+                messageDiv.classList.add('bg-gray-700', 'p-3', 'rounded-lg', 'self-start', 'w-fit');
+                header = '<p class="font-semibold text-yellow-300 mb-1">System</Fp>';
+            }
+            
+            // Sanitize text before inserting (basic protection)
+            // This prevents the browser from interpreting HTML in the bot's response
+            const textNode = document.createTextNode(text);
+            const pNode = document.createElement('p');
+            pNode.appendChild(textNode);
+            
+            messageDiv.innerHTML = header;
+            messageDiv.appendChild(pNode);
+            
+            chatBox.appendChild(messageDiv);
+            
+            // Scroll to the bottom
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // --- Event Listener for File Upload ---
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const file = fileUpload.files[0];
+            if (!file) {
+                uploadStatus.textContent = 'Please select a file.';
+                return;
+            }
+            
+            if (isProcessing) return;
+            isProcessing = true;
+            
+            // Disable form and show loading
+            uploadButton.disabled = true;
+            fileUpload.disabled = true;
+            queryButton.disabled = true;
+            queryInput.disabled = true;
+            uploadButton.textContent = '...';
+            displayMessage('system', 'Processing document... This may take a moment.');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Upload failed');
+                }
+
+                const result = await response.json();
+                
+                // Success
+                uploadStatus.textContent = `File "${result.filename}" processed.`;
+                displayMessage('system', 'Document processed successfully. You can now ask questions.');
+                
+                // Enable query form
+                queryInput.disabled = false;
+                queryButton.disabled = false;
+                queryInput.focus();
+
+            } catch (error) {
+                console.error('Upload Error:', error);
+                uploadStatus.textContent = `Error: ${error.message}`;
+                displayMessage('system', `Error: ${error.message}`);
+                
+                // Re-enable upload form on failure
+                uploadButton.disabled = false;
+                fileUpload.disabled = false;
+            } finally {
+                isProcessing = false;
+                uploadButton.textContent = 'Upload';
+            }
+        });
+
+        // --- Event Listener for Query Submission ---
+        queryForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const query = queryInput.value.trim();
+            if (!query || isProcessing) {
+                return;
+            }
+            
+            isProcessing = true;
+            
+            // Display user's message
+            displayMessage('user', query);
+            
+            // Clear input and show loading
+            queryInput.value = '';
+            queryInput.disabled = true;
+            queryButton.disabled = true;
+            displayMessage('bot', 'Thinking...');
+
+            try {
+                const response = await fetch('/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: query }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Query failed');
+                }
+
+                const result = await response.json();
+                
+                // Remove "Thinking..." message
+                chatBox.removeChild(chatBox.lastChild);
+                
+                // Display bot's answer
+                displayMessage('bot', result.answer);
+
+            } catch (error) {
+                console.error('Query Error:', error);
+                // Remove "Thinking..." message
+                chatBox.removeChild(chatBox.lastChild);
+                displayMessage('system', `Error: ${error.message}`);
+            } finally {
+                isProcessing = false;
+                queryInput.disabled = false;
+                queryButton.disabled = false;
+                queryInput.focus();
+            }
+        });
+
+    </script>
+
+</body>
+</html>
